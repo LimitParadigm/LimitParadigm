@@ -3,8 +3,8 @@ import numpy as np
 
 class GA:
 
-    def __init__(self, feederbalancing, reconstruct=False) -> None:
-        self.feederbalancing = feederbalancing
+    def __init__(self, limit_class, reconstruct=False):
+        self.limit_class = limit_class
         self.okay = 0
         self.total = 0
         self.mutation_rate = 0.1

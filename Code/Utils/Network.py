@@ -16,7 +16,7 @@ import itertools
 from tqdm import tqdm #loading bar
 import pickle 
 
-class LimitParadigm:
+class Network:
     def __init__(self, input_path):
         # Conventions:
         # - Use kWh for timeseries (easier to understand even it pandapower asks for MWh at the end)
@@ -50,23 +50,14 @@ class LimitParadigm:
         self.number_timesteps = len(self.timesteps)
         self.load_timeseries(plot_timeseries=False)
         self.assign_ts_to_phase()
-        # self.feeder_eans = {
-        #         f: self.net.asymmetric_load.loc[self.net.asymmetric_load['feeder'] == f, 'ean'].tolist()
-        #         for f in range(len(self.feeders)) }
-        # self.considered_feeder = None
-        # self.feeder_index_eans = {
-        #         f: self.net.asymmetric_load.loc[self.net.asymmetric_load['feeder'] == f, 'ean'].index.tolist()
-        #         for f in range(len(self.feeders)) }
-        # self.considered_index_eans = None
-
-        # self.aggragates_init = [self.aggregate_feeder_load(self.P, self.feeder_eans[f]) for f in range(len(self.feeders))]
-        # self.generate_Psi()
-        # self.generate_Bs()
-        
-        self.unbalance_loss = []
-        self.associated_loss = []
-        self.changes_loss = []
-        self.loss_distance = []
+        self.feeder_eans = {
+                f: self.net.asymmetric_load.loc[self.net.asymmetric_load['feeder'] == f, 'ean'].tolist()
+                for f in range(len(self.feeders)) }
+        self.considered_feeder = None
+        self.feeder_index_eans = {
+                f: self.net.asymmetric_load.loc[self.net.asymmetric_load['feeder'] == f, 'ean'].index.tolist()
+                for f in range(len(self.feeders)) }
+        self.considered_index_eans = None
 
     def import_network(self, input_path):
         net = pp.from_pickle(os.path.join(input_path, 'anonymized_net.p'))
@@ -91,8 +82,6 @@ class LimitParadigm:
             del net.line[c]
 
         # Remove old tables
-        # del net["asymmetric_load"]
-        # del net["asymmetric_sgen"]
         net.asymmetric_load.drop(net.asymmetric_load.index, inplace=True)
         net.asymmetric_sgen.drop(net.asymmetric_sgen.index, inplace=True)
 
@@ -110,15 +99,7 @@ class LimitParadigm:
     def get_phasecode_from_number(self, number_phases):
         value = {i for i in self.dict_phasecode_to_number if self.dict_phasecode_to_number[i]==number_phases}
         return value
-    def get_number_from_phasecode(self, phasecode):
-        return self.dict_phasecode_to_number[phasecode]
 
-    def get_score(self, h_surface, number_phases):
-        #PV: https://pdf.sciencedirectassets.com/280851/1-s2.0-S2211467X22X00072/1-s2.0-S2211467X23001281/main.pdf?X-Amz-Security-Token=IQoJb3JpZ2luX2VjEJ3%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIQCEnMLu0y6ENVyHyFXISbvxs%2BeVM%2BtJ4eVvSQHVHB2I%2BQIgOdtj3nYwO4mdCwqRqJCo5yh79c1SIQyWITtKvLDhjEAqsgUIRhAFGgwwNTkwMDM1NDY4NjUiDNwMccNyvzGK1FTB8CqPBXh1jHYvDjcWjAkjrBprgxY%2F5IXIb71jaq46KjuFnum9HcL%2Fxxj6xvh%2BBhvBiKaAWuJ%2BhOgKJblPAqb7t%2BT9O%2FRbJH5RUWFHL1pepYZgPIpS%2B7vaY8CtYgYkwC04gNrACswZUU0Tn%2FIR3ZVDiOD2nVo5F%2BKw1hzGKljqvdY1kZKtuSRd5MZRW8nDqfDK%2BkPzp%2F3zUsHMY2AHnyDtK4RQcA7u24MiUS9neAe1QXMTS%2FjqQ0ZzFSD28zMY6Pe0PelnlJkNVrz%2BjmEHsw8hfrPoCZN1zjWQmcKXrB0HHOYUtCFWebfPHwjpEnsMLgQ%2BeKZUGxwVNu7qhq4YJHwfzJhlGQavJ6pkXyrj8aAwI1959OusgejJ55BOJYU7285d6muckAgBzW%2FD9fxQkAjaI1Np713Yf5cqQ3iPwxJwt14jGh868RjQLoKul61a9a%2BMG4Fudb0BahvNhRYgORRrNKaVkprXBOSuOG9AVtwk8%2BB%2Bi1eLmR5frXjZig9lLzpWf9sCMMnZdTHFAcEOrhWh1Tha4wGICuXuBbvxQlmQsdF6DqHzK2K9bQsH0dSAEk6DOOoA6dEHOEeZo8FWqgbX9z80DyNqFxB3xyS8x1BwTNTByaKAiTeZDb65fjnua7hlFDDviTvFgKchSBuFaOy37Q4aA%2Fm1S2M%2FesjNe3O79Tf4tstuVbZIlmMkB%2Bma4D%2Fqv8BcEAzo1rhUtUgkP3iW%2F43WQmMvCv%2BmN3TQi%2FLOa3l0tFl14LfZOBv5Pfe%2B9Kxu803nYOkP2tOu7YOSN%2FOo1DQMTLBoZI02YOYC7US4jFjeiiA8TXdkPn4W2Wual%2B%2FcUfAa4g6%2FH0v%2Bc1CB0BmRaIy02tTis7VfNxDKBPhn8Z2DmUcwrKOcugY6sQFUt8TxKH5tsIb6vk6IEyek0EwqjIrlrTAqPubj7n4oWYna4JhceuTndqEygtfUPBNL3O6j8qlpZaMCfT4jqSN1e5ELpkIlsgF29Vgf%2FBsFS2%2BcbiPvTk6lCYxG92NQqheYErJ5bv14WmC5MKdVhGA1hMnx86TTUlKEDpPbUqeFL3WSWwY3JbYlAW0zajjRNf3DOggIBpOWxgk0kVpb%2Bo%2B8RjRQZznKo9aLV2NH8H83wvo%3D&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=20241127T133941Z&X-Amz-SignedHeaders=host&X-Amz-Expires=300&X-Amz-Credential=ASIAQ3PHCVTY6NZOVK4C%2F20241127%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Signature=e17752cbf36b4c3b6e636634e6604889bebf2c8db4d942705f9d6ad7f6d3c6f6&hash=c4025a6d6e934b7461dea9fc5af2a340b50d2e2f589342c412508ffaf3416501&host=68042c943591013ac2b2430a89b270f6af2c76d8dfd086a07176afe7c76c2c61&pii=S2211467X23001281&tid=spdf-fe3a5c3a-e8c3-485f-bd50-aea73e4c6115&sid=53e02f3a4ed4054da778a3b4a62cf4c2c620gxrqb&type=client&tsoh=d3d3LnNjaWVuY2VkaXJlY3QuY29t&ua=18075e045a5c59555e55&rr=8e928696084cb9a1&cc=be
-        #EV: https://escholarship.org/uc/item/2b05w8pk
-        score = h_surface/80 + number_phases/1.75 #Means values
-        return score
-    
     def get_phase_splitting_values(self, number_phases):
         if number_phases==1:
             return [1]
@@ -280,12 +261,6 @@ class LimitParadigm:
                 P[column] += self.assigned_pv_timeseries[column]
         self.P = P
 
-    def CalculatePossibleCombinations(self, choosable_buses, percentuage):
-        #Calculate the possible combinations given choosable buses and a percentuage of changes.
-        choosable_elements = len(choosable_buses)
-        n_combinations = math.comb(choosable_elements, int(choosable_elements * percentuage)) # comb(n,m) = n! / [(n-m)!m!], n>m
-        return n_combinations
-
     def chose_buses(self, choosable_buses, penetration_rate, probabilities):
         # Function to choose buses for PV scenarios
         elements_to_select = round(len(choosable_buses)*penetration_rate)
@@ -342,48 +317,6 @@ class LimitParadigm:
             print(f"Client ean: {ean}. \n Load: #phases: {c['phase_load']}, consumption: {c['ann_cons']}. \n PV: #phases: {c['phase_pv']}, consumption: {c['ann_pv_prod']}. \n EV: #phases: {c['phase_ev']}, consumption: {c['ann_ev_cons']}.")
             plt.show()
 
-    def generate_Psi(self):
-        Psi = []
-
-        for i in range(len(self.avalilable_phases)):
-            perm = itertools.permutations(self.avalilable_phases, i+1) 
-            for j in perm: 
-                Psi.append(''.join(j))
-        self.Psi = Psi
-
-    def get_index_from_phase_confg(self, phase):
-        for i,p in enumerate(self.Psi):
-            if(p == phase):
-                return i
-        print(f"Phase {phase} not in {self.Psi}")
-
-    def generate_Bs(self):
-        B_init = np.zeros( (len(self.net.asymmetric_load), len(self.Psi)) )
-        B_init_nobinary = []
-
-        B_feas = np.zeros( (len(self.net.asymmetric_load), len(self.Psi)) )
-        indexes_per_n_phases = {}
-        indexes_per_n_phases_customers = []
-        for i in range(len(self.avalilable_phases)):
-            indexes = [k for k,j in enumerate(self.Psi) if len(j)==i+1] #return all the configuration indexes with a given number of phases
-            indexes_per_n_phases[i+1] = indexes
-
-        for i,(_,c) in enumerate(self.net.asymmetric_load.iterrows()):
-            phase = c['phase_load']
-            index_confg = self.get_index_from_phase_confg(phase)
-            B_init[i,index_confg] = 1
-            B_init_nobinary.append(index_confg)
-            for j in indexes_per_n_phases[len(phase)]:
-                B_feas[i,j] = 1
-            indexes_per_n_phases_customers.append( indexes_per_n_phases[len(phase)] )
-
-        self.B_init = B_init
-        self.B_init_nobinary = B_init_nobinary
-        self.B_init_opposite = 1 - B_init
-        self.B_feas = B_feas
-        self.B_feas_nobinary = indexes_per_n_phases
-        self.B_feas_nobinary_per_customer = indexes_per_n_phases_customers
-
     def get_feeder(self, net, bus, prev_buses = [], prev_lines = []):
         #Find this info plotting the network: _ = simple_plotly(net, aspectratio=(10,8))
         trafo_bus_id = self.net.trafo['lv_bus'].values[0] #may depend on the network
@@ -407,58 +340,6 @@ class LimitParadigm:
             self.net.line.loc[self.net.line.index.isin(lines), 'feeder'] = i
             self.net.load.loc[self.net.load['bus'].isin(buses), 'feeder'] = i
         self.customers_index_per_feeder = {i:self.net.load.loc[self.net.load['feeder'] == i].index.values for i in range(len(self.feeders))}
-
-    def change_P(self, B):
-        P_new = self.P.copy(deep=True)
-        for i,changed in enumerate(np.sum(B * self.B_init_opposite, axis=1)):
-            if(changed==1):
-                c = self.net.asymmetric_load.iloc[i] #it may give issues if the indexes are not the same as expected
-                ean = c['ean']
-                old_conf = c['phase_load']
-                new_conf = self.Psi[np.argmax(B[i])]
-                for j,p in enumerate(new_conf):
-                    P_new[f'{ean}_{new_conf[j]}'] = self.P[f'{ean}_{old_conf[j]}'] #Swap columns
-
-                # Clear phases that are not in use anymore
-                old_phases = set(old_conf)  # Collect all old phases
-                used_phases = set(new_conf)  # Collect all new phases
-                unused_phases = old_phases - used_phases  # Find old phases not reused
-                for old_phase in unused_phases:
-                    P_new[f'{ean}_{old_phase}'] = 0
-
-        self.temp_P = P_new
-        return P_new
-    def aggregate_feeder_load_old(self, P, t,feeder_eans):
-        A = [sum(P.loc[t, f'{ean}_{p}'] for ean in feeder_eans) for p in self.avalilable_phases]
-        return A
-    def aggregate_feeder_load(self, P, feeder_eans):
-        # Remove the t parameter since we'll process all timesteps
-        A = []
-        # For each phase
-        for p in self.avalilable_phases:
-            # Create column names for this phase
-            phase_cols = [f'{ean}_{p}' for ean in feeder_eans]
-            # Sum all EANs for this phase across all timesteps
-            phase_sum = P[phase_cols].sum(axis=1)
-            A.append(phase_sum)
-        
-        # Stack the phases side by side to get a Tx3 array
-        return np.column_stack(A)
-    
-    def get_B_from_genetic(self, solution):
-        B = np.zeros( (self.number_customers, len(self.Psi)) )
-        for i,s in enumerate(solution):
-            B[i,s] = 1
-        return B.copy()
-    def get_genetic_from_B(self, B):
-        solution = []
-        for i in range(B.shape[0]):
-            solution.append(np.argmax(B[i]))  # Find the column index of the maximum value (1 in this case)
-        return solution
-    def check_constraint_feasible_configuration(self, B):
-        for i in range(self.number_customers):
-            if not np.all(B[i] <= self.B_feas[i]):
-                return -1
 
     def objective_function(self, B, complete=True):
         num_feeders = len(self.feeders)
@@ -501,8 +382,6 @@ class LimitParadigm:
         self.loss_distance.append(loss_distance)
         
         return loss
-
-
 
     def load_time_series_at_timestep(self, P, current_net, time_step):
         power_factor = 0.98
