@@ -16,22 +16,20 @@ import itertools
 from tqdm import tqdm #loading bar
 import pickle 
 
-class FeederBalancing:
+class LimitParadigm:
     def __init__(self, input_path):
         # Conventions:
         # - Use kWh for timeseries (easier to understand even it pandapower asks for MWh at the end)
         np.random.seed(19)
         self.input_path = input_path
 
-        self.avalilable_phases = ['A', 'B', 'C']
+        self.avalilable_phases = ['A']
         self.len_timeseries = 4*24*365 #to change depending on the availbale data
         self.dict_phasecode_to_number = {'Monophasé (sans neutre)':1, 'Monophasé':1, 'Triphasé':2, 'Tétraphasé':3}
         self.pv_scaling_factor = 712 #2850/4=712 -> energy produced by a system of 1 kWhp in an year. 
         self.pv_installation_sizes = [self.pv_scaling_factor * 4, self.pv_scaling_factor * 16] #Ref: https://www.yesenergysolutions.co.uk/advice/how-much-energy-solar-panels-produce-home
         self.ev_scaling_factor = 350
         self.ev_installation_sizes = [self.ev_scaling_factor * 3.5, self.ev_scaling_factor * 18] #Ref: TODO
-        self.hp_scaling_factor = 300
-        self.hp_installation_sizes = [self.hp_scaling_factor * 2.5, self.hp_scaling_factor * 16] #Ref: TODO
 
         self.consumption_file = pd.read_excel(os.path.join(self.input_path, "RESA", "anonymized_consumption_file.xlsx"))
         self.list_load_timeseries = pd.read_csv(os.path.join(input_path, 'RESA', 'anonymized_Load_SM_timeseries.csv'), sep=',', index_col=0).reset_index()
@@ -40,12 +38,11 @@ class FeederBalancing:
         self.pv_timeseries_default = pd.read_csv(os.path.join(self.input_path, 'Timeseries', '1-LV-rural2--1-sw', 'RESProfile.csv'), sep=';').reset_index()
         self.evhp_timeseries = pd.read_excel(os.path.join(self.input_path, 'Timeseries', 'HPEV timeseries.xlsx')).reset_index()[:self.len_timeseries]
         self.ev_timeseries_high = pd.read_csv(os.path.join(self.input_path, 'Timeseries', 'EV_High.csv'),  index_col=0)[:self.len_timeseries]['High']
-        self.hp_timeseries_high = pd.read_csv(os.path.join(self.input_path, 'Timeseries', 'HP_High.csv'),  index_col=0)[:self.len_timeseries]['High']
 
-        self.net, self.choosable_buses, self.distances = self.import_network(self.input_path)
-        self.number_customers = len(self.net.asymmetric_load)
+        self.net, self.choosable_buses = self.import_network(self.input_path)
+        self.number_customers = len(self.net.load)
         self.feeders = [270,61]
-        self.assign_feeders(self.feeders) #Depends on the network (The first bus(es) after the substation low-voltage bus )
+        # self.assign_feeders(self.feeders) #Depends on the network (The first bus(es) after the substation low-voltage bus )
         self.temp_P = None
         self.feeder_colors = np.random.choice(list(mcolors.CSS4_COLORS.keys()), len(self.feeders))
         
@@ -53,18 +50,18 @@ class FeederBalancing:
         self.number_timesteps = len(self.timesteps)
         self.load_timeseries(plot_timeseries=False)
         self.assign_ts_to_phase()
-        self.feeder_eans = {
-                f: self.net.asymmetric_load.loc[self.net.asymmetric_load['feeder'] == f, 'ean'].tolist()
-                for f in range(len(self.feeders)) }
-        self.considered_feeder = None
-        self.feeder_index_eans = {
-                f: self.net.asymmetric_load.loc[self.net.asymmetric_load['feeder'] == f, 'ean'].index.tolist()
-                for f in range(len(self.feeders)) }
-        self.considered_index_eans = None
+        # self.feeder_eans = {
+        #         f: self.net.asymmetric_load.loc[self.net.asymmetric_load['feeder'] == f, 'ean'].tolist()
+        #         for f in range(len(self.feeders)) }
+        # self.considered_feeder = None
+        # self.feeder_index_eans = {
+        #         f: self.net.asymmetric_load.loc[self.net.asymmetric_load['feeder'] == f, 'ean'].index.tolist()
+        #         for f in range(len(self.feeders)) }
+        # self.considered_index_eans = None
 
-        self.aggragates_init = [self.aggregate_feeder_load(self.P, self.feeder_eans[f]) for f in range(len(self.feeders))]
-        self.generate_Psi()
-        self.generate_Bs()
+        # self.aggragates_init = [self.aggregate_feeder_load(self.P, self.feeder_eans[f]) for f in range(len(self.feeders))]
+        # self.generate_Psi()
+        # self.generate_Bs()
         
         self.unbalance_loss = []
         self.associated_loss = []
@@ -75,12 +72,33 @@ class FeederBalancing:
         net = pp.from_pickle(os.path.join(input_path, 'anonymized_net.p'))
         choosable_buses = list(net.load.bus)
 
+        pp.create_loads(net, list(net.asymmetric_load['bus']), p_mw=0)
+        columns_to_copy = ['ean', 'feeder', 'ann_cons', 'probPV', 'probEV', 'hh_surf', 'hh_size']
+        for c in columns_to_copy:
+            net.load[c] = list(net.asymmetric_load[c])
+        net.load['phase_load'] = 'A'
+        net.load['phase_pv'] = ''
+        net.load['phase_ev'] = ''
+
+        columns_to_del = ['s_sc_max_mva', 'rx_max', 'x0x_max', 'r0x0_max']
+        for c in columns_to_del:
+            del net.ext_grid[c]
+        columns_to_del = ['vector_group', 'vk0_percent', 'vkr0_percent', 'mag0_percent', 'mag0_rx', 'si0_hv_partial']
+        for c in columns_to_del:
+            del net.trafo[c]
+        columns_to_del = ['r0_ohm_per_km', 'c0_nf_per_km', 'x0_ohm_per_km']
+        for c in columns_to_del:
+            del net.line[c]
+
+        # Remove old tables
+        # del net["asymmetric_load"]
+        # del net["asymmetric_sgen"]
+        net.asymmetric_load.drop(net.asymmetric_load.index, inplace=True)
+        net.asymmetric_sgen.drop(net.asymmetric_sgen.index, inplace=True)
+
         self.NetInfo(net)
         simple_plotly(net, bus_color=net.bus['color'])
-
-        distances = 1 / np.array(net.asymmetric_load['distance'])
-        
-        return net, choosable_buses, distances
+        return net, choosable_buses
     def NetInfo(self, net):
         #Print various statistics about the network.
         print(f'There are {len(net.ext_grid)} substation(s)')
@@ -100,18 +118,6 @@ class FeederBalancing:
         #EV: https://escholarship.org/uc/item/2b05w8pk
         score = h_surface/80 + number_phases/1.75 #Means values
         return score
-
-    def phases_from_score(self, h_surface, phases_load, tech_installation_sizes):
-        number_phases_load = len(phases_load)
-        score = self.get_score(h_surface, number_phases_load)
-        if(score < 3 or number_phases_load < len(self.avalilable_phases)): #TODO: The <3 might need some additional consideration.
-            annual_consumption = tech_installation_sizes[0]
-            phases = phases_load[:1]
-        else:
-            annual_consumption = tech_installation_sizes[1]
-            phases = self.avalilable_phases
-        
-        return phases, annual_consumption
     
     def get_phase_splitting_values(self, number_phases):
         if number_phases==1:
@@ -134,7 +140,7 @@ class FeederBalancing:
             timeseries_default1 = self.load_timeseries_default['H0-A_pload'][:self.len_timeseries]
             timeseries_default2 = self.load_timeseries_default['H0-B_pload'][:self.len_timeseries]
             timeseries_default = [timeseries_default1, timeseries_default2]
-            for c in customers_wo_ts:
+            for i,c in enumerate(customers_wo_ts):
                 ean = c.ean
                 annual_consumption = c['ann_cons']
                 phases = c['phase_load']
@@ -154,15 +160,12 @@ class FeederBalancing:
                         closest_ean = other_ean
                         closest_diff = consumption_diff
 
-                multipliers = self.get_phase_splitting_values(len(phases))
-                factor = np.random.random(1)*0.2+0.8
-                for i,p in enumerate(phases):
-                    if(closest_ean):
-                        ts = list_load_timeseries[f"{closest_ean}_{p}"]
-                    else:
-                        ts = timeseries_default[i%len(timeseries_default)] #Use a standard one
-                    tmp_load_timeseries = self.normalize_time_series(ts, annual_consumption * multipliers[i])
-                    assigned_load_timeseries[f'{ean}_{p}'] = tmp_load_timeseries * factor
+                if(closest_ean):
+                    ts = list_load_timeseries[f"{closest_ean}_A"]
+                else:
+                    ts = timeseries_default[i%len(timeseries_default)] #Use a standard one
+                tmp_load_timeseries = self.normalize_time_series(ts, annual_consumption)
+                assigned_load_timeseries[f'{ean}_A'] = tmp_load_timeseries
 
             return assigned_load_timeseries
         
@@ -170,19 +173,14 @@ class FeederBalancing:
         avalilable_ts_for_ean = set(avalilable_ts_for_ean)
 
         customers_wo_ts = []
-        for _,c in self.net.asymmetric_load.iterrows():
+        for _,c in self.net.load.iterrows():
             ean = c['ean']
             if(ean in avalilable_ts_for_ean):
                 phases = c['phase_load']
                 annual_consumption = c['ann_cons']
-                multipliers = self.get_phase_splitting_values(len(phases))
-                for i,p in enumerate(phases):
-                    if(f"{ean}_{p}" in self.list_load_timeseries.columns):
-                        ts = self.list_load_timeseries[f"{ean}_{p}"]
-                    elif(p=='B' or p=='C'): #If we enter here it means that the customer is 3-phase but the time series for B and C are not available (most likely tons of missing values). Therefore use the A-one
-                        ts = self.list_load_timeseries[f"{ean}_A"]
-                    tmp_load_timeseries = self.normalize_time_series(ts, annual_consumption * multipliers[i])[:self.len_timeseries]
-                    assigned_load_timeseries[f"{ean}_{p}"] = tmp_load_timeseries
+                ts = self.list_load_timeseries[f"{ean}_A"]
+                tmp_load_timeseries = self.normalize_time_series(ts, annual_consumption)[:self.len_timeseries]
+                assigned_load_timeseries[f"{ean}_A"] = tmp_load_timeseries
             else:
                 customers_wo_ts.append(c)
         assigned_load_timeseries =  assign_find_closest_load_ts(customers_wo_ts, assigned_load_timeseries, self.list_load_timeseries, avalilable_ts_for_ean)
@@ -195,29 +193,27 @@ class FeederBalancing:
             timeseries_default = [timeseries_default1, timeseries_default2, timeseries_default3]
 
             pv_pen_rate = 0.85 #[0,1]
-            current_pv_pen_rate =  len(customers_wo_ts) / len(self.net.asymmetric_load)
+            current_pv_pen_rate =  len(customers_wo_ts) / len(self.net.load)
             delta_pv_pen_rate = pv_pen_rate # pv_pen_rate - current_pv_pen_rate #TODO: fix to a different amount
             choosable_buses_missing_pv = [i.bus for i in customers_wo_ts]
             self.net = self.PVinstallation(self.net, choosable_buses_missing_pv, delta_pv_pen_rate)
             for j,c in enumerate(customers_wo_ts):
                 ean = c['ean']
-                c = self.net.asymmetric_load[self.net.asymmetric_load['ean'] == ean]
+                c = self.net.load[self.net.load['ean'] == ean]
                 phases = c['phase_pv'].values[0]
                 if(phases is not None):
                     annual_prod = c['ann_pv_prod'].values[0]
 
-                    multipliers = self.get_phase_splitting_values(len(phases))
                     period = self.shift_timeseries(4*2)
                     factor = np.random.random(1)*0.2+0.8
-                    for i,p in enumerate(phases):
-                        tmp_load_timeseries = self.scale_time_series(timeseries_default[(j+i)%len(timeseries_default)], annual_prod * multipliers[i], self.pv_scaling_factor)
-                        assigned_timeseries[f'{ean}_{p}'] = -tmp_load_timeseries.shift(periods=period, fill_value=0) * factor
+                    tmp_load_timeseries = self.scale_time_series(timeseries_default[j%len(timeseries_default)], annual_prod, self.pv_scaling_factor)
+                    assigned_timeseries[f'{ean}_A'] = -tmp_load_timeseries.shift(periods=period, fill_value=0) * factor
             return assigned_timeseries
 
         assigned_pv_timeseries = pd.DataFrame()
         customers_wo_ts = []
         avalilable_ts_for_ean = set(self.list_pv_timeseries.columns.values[1:])
-        for j,c in self.net.asymmetric_load.iterrows():
+        for j,c in self.net.load.iterrows():
             ean = c['ean']
             if(ean in avalilable_ts_for_ean):
                 annual_prod = np.sum(self.list_pv_timeseries[ean])
@@ -229,13 +225,11 @@ class FeederBalancing:
                 
                 phases = phases_load if number_phase < len(self.avalilable_phases) else  self.avalilable_phases[:number_phase]
                 
-                self.net.asymmetric_load.at[j, 'phase_pv'] = ''.join(phases)
-                self.net.asymmetric_load.at[j, 'ann_pv_prod'] = int(annual_prod)
+                self.net.load.at[j, 'phase_pv'] = ''.join(phases)
+                self.net.load.at[j, 'ann_pv_prod'] = int(annual_prod)
 
-                for i,p in enumerate(phases):
-                    multipliers = self.get_phase_splitting_values(len(phases))
-                    tmp_pv_timeseries = self.normalize_time_series(self.list_pv_timeseries[ean], annual_prod * multipliers[i])[:self.len_timeseries]
-                    assigned_pv_timeseries[f"{ean}_{p}"] = -tmp_pv_timeseries
+                tmp_pv_timeseries = self.normalize_time_series(self.list_pv_timeseries[ean], annual_prod)[:self.len_timeseries]
+                assigned_pv_timeseries[f"{ean}_A"] = -tmp_pv_timeseries
             else:
                 customers_wo_ts.append(c)
 
@@ -243,97 +237,47 @@ class FeederBalancing:
 
         def assign_timeseries_EVHP(column, pen_rate):
             if(column=='ev'):
-                tech_installation_scaling_factor = self.ev_scaling_factor
-                tech_installation_sizes = self.ev_installation_sizes
                 ts_to_consider = "5000 kWh"
-            else:
-                tech_installation_scaling_factor = self.hp_scaling_factor
-                tech_installation_sizes = self.hp_installation_sizes
-                ts_to_consider = "Total PAC"
 
             assigned_timeseries = pd.DataFrame()
-            for i ,c in self.net.asymmetric_load.iterrows():
+            for i ,c in self.net.load.iterrows():
                 install_random = np.random.rand()
                 if(install_random>pen_rate):
                     continue
                 ean = c['ean']
-                phases_load = c['phase_load']
-                h_surface = c['hh_surf']
+                phases = 'A'
+                annual_consumption = self.pv_installation_sizes[0]
+                self.net.load.at[i, f'ann_{column}_cons'] = annual_consumption
+                self.net.load.at[i, f'phase_{column}'] = phases
 
-                phases, annual_consumption = self.phases_from_score(h_surface, phases_load, tech_installation_sizes)
-                
-                self.net.asymmetric_load.at[i, f'ann_{column}_cons'] = annual_consumption
-                self.net.asymmetric_load.at[i, f'phase_{column}'] = ''.join(phases)
-
-                multipliers = self.get_phase_splitting_values(len(phases))
                 period = self.shift_timeseries(4*5)
                 factor = np.random.random(1)*0.2+0.8
-                for j,p in enumerate(phases):
-                    if(annual_consumption>tech_installation_sizes[0]):
-                        ts = self.ev_timeseries_high if column=='ev' else self.hp_timeseries_high
-                        tmp_load_timeseries = self.scale_time_series(ts, annual_consumption * multipliers[j], tech_installation_scaling_factor)
-                    else:
-                        tmp_load_timeseries = self.normalize_time_series(self.evhp_timeseries[ts_to_consider], annual_consumption * multipliers[j])
-                    assigned_timeseries[f"{ean}_{p}"] = tmp_load_timeseries.shift(periods=period, fill_value=0) * factor
+                tmp_load_timeseries = self.normalize_time_series(self.evhp_timeseries[ts_to_consider], annual_consumption)
+                assigned_timeseries[f"{ean}_A"] = tmp_load_timeseries.shift(periods=period, fill_value=0) * factor
             return assigned_timeseries
         
         ev_pen_rate = 0.7
         assigned_ev_timeseries = assign_timeseries_EVHP('ev', ev_pen_rate)
-        hp_pen_rate = 0.6
-        assigned_hp_timeseries = assign_timeseries_EVHP('hp', hp_pen_rate)
 
         self.assigned_load_timeseries = assigned_load_timeseries
         self.assigned_pv_timeseries = assigned_pv_timeseries
         self.assigned_ev_timeseries = assigned_ev_timeseries
-        self.assigned_hp_timeseries= assigned_hp_timeseries
-        print(f"Customers with:\nPV: {self.net.asymmetric_load['phase_pv'].notnull().sum()},\nEV: {self.net.asymmetric_load['phase_ev'].notnull().sum()},\nHP: {self.net.asymmetric_load['phase_hp'].notnull().sum()}")
+        print(f"Customers with:\nPV: {self.net.load['phase_pv'].notnull().sum()},\nEV: {self.net.load['phase_ev'].notnull().sum()}.")
 
 
     def assign_ts_to_phase(self):
-        def get_least_used_phase(P, ean, phases_load, inverse=False):
-            subset_P = P[ [f"{ean}_{p}" for p in phases_load] ]
-            phase_usages = subset_P.sum(axis=0)
-
-            ind = np.argmax(phase_usages) if inverse else np.argmin(phase_usages)
-            phase = phases_load[ind]
-            return phase
-
-        def update_least_used_phase(P, phases_load, phases_tech, ean, annual_consumption, tech_installation_sizes, assigned_timeseries, inverse=False):
-            if(phases_tech is not None): #Tech not installed
-                is_annual_consumption_large = annual_consumption > tech_installation_sizes[0]
-                if(is_annual_consumption_large): #Consumption is large: split the tech among the phases almost equally (already done in the previous step)
-                    for p in phases_tech:
-                        P[f'{ean}_{p}'] += assigned_timeseries[f"{ean}_{p}"]
-                else: #Consumption is not large: assign the tech to the least used phase
-                    least_used_phase = get_least_used_phase(P, ean, phases_load, inverse=inverse)
-                    column_least_used = f'{ean}_{least_used_phase}'
-                    P[column_least_used] += assigned_timeseries[f"{ean}_{phases_tech[0]}"]
-
-        temp_columns_P = [f"{ean}_{p}" for ean in self.net.asymmetric_load['ean'] for p in self.avalilable_phases]
+        temp_columns_P = [f"{ean}_{p}" for ean in self.net.load['ean'] for p in self.avalilable_phases]
         tmp_values_P = np.zeros( [self.len_timeseries, len(temp_columns_P)] )
         P = pd.DataFrame(tmp_values_P, columns=temp_columns_P)
-        for i,c in self.net.asymmetric_load.iterrows():
+        for i,c in self.net.load.iterrows():
             phases = c['phase_load']
             ean = c['ean']
-            for p in phases:
-                column = f'{ean}_{p}'
-                P[column] += self.assigned_load_timeseries[column]
-            if(len(phases) == 1): #Customers connected to a single phase
-                column = f'{ean}_{phases[0]}'
-                if(c['phase_ev'] is not None):
-                    P[column] += self.assigned_ev_timeseries[column]
-                if(c['phase_hp'] is not None):
-                    P[column] += self.assigned_hp_timeseries[column]
-                if(c['phase_pv'] is not None):
-                    P[column] += self.assigned_pv_timeseries[column]
-            else: #Customers with multiple phases
-                phases_pv = c['phase_pv']
-                update_least_used_phase(P, phases, phases_pv, ean, c['ann_pv_prod'], self.pv_installation_sizes, self.assigned_pv_timeseries, inverse=True)
-                phases_ev = c['phase_ev']
-                update_least_used_phase(P, phases, phases_ev, ean, c['ann_ev_cons'], self.ev_installation_sizes, self.assigned_ev_timeseries)
-                phases_hp = c['phase_hp']
-                update_least_used_phase(P, phases, phases_hp, ean, c['ann_hp_cons'], self.hp_installation_sizes, self.assigned_hp_timeseries)
-        
+            column = f'{ean}_{phases[0]}'
+            P[column] += self.assigned_load_timeseries[column]
+            if(c['phase_ev'] != ''):
+                P[column] += self.assigned_ev_timeseries[column]
+            if(c['phase_pv'] != ''):
+                P[column] += self.assigned_pv_timeseries[column]
         self.P = P
 
     def CalculatePossibleCombinations(self, choosable_buses, percentuage):
@@ -353,31 +297,21 @@ class FeederBalancing:
         return ids
 
     def PVinstallation(self, net, choosable_buses, penetration):
-        prob = net.asymmetric_load[net.asymmetric_load.bus.isin(choosable_buses)]['probPV']
+        prob = net.load[net.load.bus.isin(choosable_buses)]['probPV']
         ids = self.chose_buses(choosable_buses, penetration, prob)
 
         for i in ids:
-            h_surface = net.asymmetric_load.loc[net.asymmetric_load['bus']==i, 'hh_surf'].values[0]
-            phases_load = net.asymmetric_load.loc[net.asymmetric_load['bus']==i, 'phase_load'].values[0]
-
-            phases, annual_prod = self.phases_from_score(h_surface, phases_load, self.pv_installation_sizes)
-            ind = net.asymmetric_load[net.asymmetric_load['bus']==i].index[0]
-            net.asymmetric_load.at[ind, 'ann_pv_prod'] = annual_prod
-            net.asymmetric_load.at[ind, 'phase_pv'] = ''.join(phases)
+            phases, annual_prod = 'A', self.pv_installation_sizes[0]
+            ind = net.load[net.load['bus']==i].index[0]
+            net.load.at[ind, 'ann_pv_prod'] = annual_prod
+            net.load.at[ind, 'phase_pv'] = ''.join(phases)
         return net
     def EVinstallation(self, net, choosable_buses, penetration):
-        ids = self.Chose_buses(self, choosable_buses, penetration, net.asymmetric_load['probEV'])
+        ids = self.Chose_buses(self, choosable_buses, penetration, net.load['probEV'])
 
         for i in ids:
             #Add EV to customer's bus. No need to create a new element, just add 'E' to 'tech' columns
-            net.asymmetric_load.loc[net.asymmetric_load['bus'] == i, 'tech'] += 'E'
-        return net
-    def HPinstallation(self, net, choosable_buses, penetration):
-        ids =self. Chose_buses(choosable_buses, penetration, net.asymmetric_load['probHP'])
-
-        for i in ids:
-            #Add HP to customer's bus. No need to create a new element, just add 'H' to 'tech' columns
-            net.asymmetric_load.loc[net.asymmetric_load['bus'] == i, 'tech'] += 'H'
+            net.load.loc[net.load['bus'] == i, 'tech'] += 'E'
         return net
 
     def normalize_time_series(self, timeseries, total_consumption):
@@ -400,12 +334,12 @@ class FeederBalancing:
         return sorted(timeseries_steps)
 
     def plot_P(self,number=-1):
-        for _,c in self.net.asymmetric_load[:number].iterrows():
+        for _,c in self.net.load[:number].iterrows():
             ean = c['ean']
             for p in self.avalilable_phases:
                 plt.plot(self.P.iloc[self.timesteps][f'{ean}_{p}'].values)
             
-            print(f"Client ean: {ean}. \n Load: #phases: {c['phase_load']}, consumption: {c['ann_cons']}. \n PV: #phases: {c['phase_pv']}, consumption: {c['ann_pv_prod']}. \n EV: #phases: {c['phase_ev']}, consumption: {c['ann_ev_cons']}. \n HP: #phases: {c['phase_hp']}, consumption: {c['ann_hp_cons']}.")
+            print(f"Client ean: {ean}. \n Load: #phases: {c['phase_load']}, consumption: {c['ann_cons']}. \n PV: #phases: {c['phase_pv']}, consumption: {c['ann_pv_prod']}. \n EV: #phases: {c['phase_ev']}, consumption: {c['ann_ev_cons']}.")
             plt.show()
 
     def generate_Psi(self):
@@ -471,8 +405,8 @@ class FeederBalancing:
 
             self.net.bus.loc[self.net.bus.index.isin(buses), 'feeder'] = i
             self.net.line.loc[self.net.line.index.isin(lines), 'feeder'] = i
-            self.net.asymmetric_load.loc[self.net.asymmetric_load['bus'].isin(buses), 'feeder'] = i
-        self.customers_index_per_feeder = {i:self.net.asymmetric_load.loc[self.net.asymmetric_load['feeder'] == i].index.values for i in range(len(self.feeders))}
+            self.net.load.loc[self.net.load['bus'].isin(buses), 'feeder'] = i
+        self.customers_index_per_feeder = {i:self.net.load.loc[self.net.load['feeder'] == i].index.values for i in range(len(self.feeders))}
 
     def change_P(self, B):
         P_new = self.P.copy(deep=True)
