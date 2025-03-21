@@ -1,160 +1,149 @@
 import pygad
 import numpy as np
 
-class GA:
+import pandas as pd
+class GA_limits:
 
-    def __init__(self, limit_class, reconstruct=False):
-        self.limit_class = limit_class
+    def __init__(self, network_obj, limit_obj):
+        self.network_obj = network_obj
+        self.limit_obj = limit_obj
         self.okay = 0
         self.total = 0
-        self.mutation_rate = 0.1
+        self.mutation_rate = 0.4
         self.keep_parents = None
-        self.num_generations = 60 # Number of generations.
-        self.population_size = 50 # Number of solutions in the population.
-        self.best_solution = None
+        self.num_generations = 50 # Number of generations.
+        self.population_size = 35 # Number of solutions in the population.
+        self.number_genes = network_obj.number_customers
+        self.best_solution_found = None
         self.mistakes = []
         self.fitnesses = []
 
-        self.reconstruct = reconstruct
         self.feeder = None
         self.initial_solution = None
-        self.customer_mappings = None
-        self.customer_mapping = None
 
-    def generate_individual(self, constraints):
-        return [np.random.choice(c) for c in constraints]
+        self.scaling_factor = 1
+        self.decrease_scaling_factor = 0.05
+        self.c = 0
 
-    def reconstruct_solution(self, solution):
-        temp_solution = self.initial_solution.copy()
-        for i,c in enumerate(self.customer_mapping):
-            temp_solution[c] = solution[i]
-        return temp_solution
+        self.n = self.network_obj.number_customers
+        self.gene_space = [{} for _ in range(self.n * 2)]
+        for i in range(self.n):
+            #Export (production -> [PV peak production,0])
+            self.gene_space[i] = {'low': float(self.network_obj.contractual_limits[i,0]), 'high':0}
+            #Import [2, contractual power + EV])
+            self.gene_space[self.n+i] = {'low': 1, 'high': float(self.network_obj.contractual_limits[i,1])}
+
+    def generate_individual(self):
+        L = np.ones(self.network_obj.limits_shape)
+        for i,c in enumerate(self.network_obj.contractual_limits):
+            for j,l in enumerate(c):
+                L[i,j] = np.random.random() * self.network_obj.contractual_limits[i,j] * self.scaling_factor
+        return L.flatten('F')
 
     def fitness_func(self, ga_instance, solution, solution_idx):
-        if(self.reconstruct):
-            solution = self.reconstruct_solution(solution)
-        B = self.feederbalancing.get_B_from_genetic(solution)
         self.total+=1
-        if(self.feederbalancing.check_constraint_feasible_configuration(B) == -1):
+        if(self.limit_obj.SafetyVerification(solution, True) == False):
             self.mistakes.append(solution.copy())
+            self.scaling_factor -= self.decrease_scaling_factor
+            self.scaling_factor = self.scaling_factor if self.scaling_factor>0.1 else 0.1
             return 0
+        self.scaling_factor += self.decrease_scaling_factor
+        self.scaling_factor = self.scaling_factor if self.scaling_factor<0.9 else 0.9
         self.okay+=1
-        loss = self.feederbalancing.objective_function(B)
-        fitness = 1.0 / (loss + 1e-9)
+        fitness = self.limit_obj.objective_function(solution, True)
+        # fitness = 1.0 / (fitness + 1e-9)
         return fitness
+
+    def on_mutation(self, ga_instance, offspring_mutation):
+        for i, gene in enumerate(offspring_mutation):
+            for j, value in enumerate(gene):
+                customer = j % self.n
+                column = j // self.n
+                if column == 0:
+                    v = max(self.gene_space[j]['low'], min(self.gene_space[j]['high'], value))
+                elif column == 1:
+                    v = max(self.gene_space[j]['low'], min(self.gene_space[j]['high'], value))
+                offspring_mutation[i, j] = v
+
 
     def on_generation(self, ga_instance):
         tmp_best_solution = ga_instance.best_solution(pop_fitness=ga_instance.last_generation_fitness)
         self.fitnesses.append(ga_instance.last_generation_fitness)
         print(f"Generation = {ga_instance.generations_completed}/{self.num_generations}")
-        diff = tmp_best_solution[1] if not self.best_solution else tmp_best_solution[1] - self.best_solution[1]
+        diff = tmp_best_solution[1] if self.best_solution_found is None else tmp_best_solution[1] - self.best_solution_found[1]
         if(diff>0):
-            print(f"New solution    = {tmp_best_solution[0]}")
-            print(f"Fitness         = {tmp_best_solution[1]} (diff: {diff})")
-            self.best_solution = tmp_best_solution
-            if(self.reconstruct):            
-                B_sol = self.feederbalancing.get_B_from_genetic(
-                    self.reconstruct_solution(self.best_solution[0])
-                    )
-            else:
-                B_sol = self.feederbalancing.get_B_from_genetic(self.best_solution[0])
-            print(f'Solution loss: {self.feederbalancing.objective_function(B_sol, False)} ({self.feederbalancing.objective_function(B_sol)}). N. changes: {np.sum(B_sol * self.feederbalancing.B_init_opposite)}.')
+            # print(f"New solution    = {tmp_best_solution[0]}")
+            print(f"Fitness = {tmp_best_solution[1]} (diff: {diff})")
+            self.best_solution_found = tmp_best_solution
             print()
-            mutation_rate = self.mutation_rate
-        else:
-            mutation_rate = np.random.rand() * 0.8 + 0.05 
+        elif(self.best_solution_found==None):
+            self.best_solution_found = tmp_best_solution
+
+        for i,gene in enumerate(ga_instance.population):
+            for j, value in enumerate(gene):
+                if(i>self.keep_parents and np.random.rand() < self.mutation_rate):
+                    customer = j % self.n
+                    column = j // self.n
+                    v = np.random.rand() * self.network_obj.contractual_limits[customer,column] * self.scaling_factor
+                    ga_instance.population[i,j] = v
 
 
-        #Sort population
-        population_with_fitness = list(zip(ga_instance.last_generation_fitness, ga_instance.population))
-        sorted_population_with_fitness = sorted(population_with_fitness, key=lambda x: x[0], reverse=True)
-        sorted_fitness, sorted_population = zip(*sorted_population_with_fitness)
-        ga_instance.population = np.array(sorted_population)
-        ga_instance.last_generation_fitness = np.array(sorted_fitness)
-
-        for i,gene in enumerate(ga_instance.population[self.keep_parents:]):
-            for cust, conf in enumerate(gene):
-                if(self.reconstruct):
-                    feasible_configs = self.feederbalancing.B_feas_nobinary_per_customer[self.customer_mapping[cust]]
-                else:
-                    feasible_configs = self.feederbalancing.B_feas_nobinary_per_customer[cust]
-                if(conf not in feasible_configs or np.random.rand() < mutation_rate): #Ensure that all the genes are feasible + add mutation
-                    ga_instance.population[self.keep_parents+i,cust] = np.random.choice(feasible_configs)
-        if(self.best_solution):
-            # ga_instance.population[self.keep_parents+1] = self.best_solution[0] #Add solution since to assure feasability you may remove the best solution
-            ga_instance.population[0] = self.best_solution[0] #Add solution since to assure feasability you may remove the best solution
-
+        
     def initialize_run(self):
         num_parents_mating = max(4, int(self.population_size*0.4)) # Number of solutions to be selected as parents in the mating pool.
         self.keep_parents = np.max([4,int(self.population_size*0.1)])
         
-        self.customer_mappings = self.feederbalancing.feeder_index_eans
-        if(self.reconstruct):
-            self.customer_mapping = self.customer_mappings[self.feeder]
-            num_genes = len(self.customer_mapping)
-            constraints = [self.feederbalancing.B_feas_nobinary_per_customer[i] for i in self.customer_mapping]
-            print(f"Approximated solution! Solving for feeder: {self.feeder}, customers: {self.customer_mapping}")
-        else:
-            constraints = self.feederbalancing.B_feas_nobinary_per_customer
-            num_genes = len(self.feederbalancing.net.asymmetric_load)
+        # tested_combinations = self.num_generations*self.population_size
+        # print(f"There are {possible_combinations:e} possible combinations to test (good luck with that!!). Solutions that will be tested: {tested_combinations} ({(tested_combinations/possible_combinations*100):.2f}%)")
+        # print(f"Initial solution: {self.feederbalancing.B_init_nobinary}. Number customers: {len(self.feederbalancing.B_init_nobinary)}\n")
 
-        possible_combinations = 1
-        for i in constraints:
-            possible_combinations = possible_combinations * len(i)
-        tested_combinations = self.num_generations*self.population_size
-        print(f"There are {possible_combinations:e} possible combinations to test (good luck with that!!). Solutions that will be tested: {tested_combinations} ({(tested_combinations/possible_combinations*100):.2f}%)")
-        print(f"Initial solution: {self.feederbalancing.B_init_nobinary}. Number customers: {len(self.feederbalancing.B_init_nobinary)}\n")
-
-        initial_population = [self.generate_individual(constraints) for _ in range(self.population_size)]
-        initial_population[0] = [self.feederbalancing.B_init_nobinary[j] for j in self.customer_mapping] if self.reconstruct else self.feederbalancing.B_init_nobinary
+        initial_population = [self.generate_individual() for _ in range(self.population_size)]
 
         ga_instance = pygad.GA(num_generations=self.num_generations,
-                            num_genes=num_genes,
-                            gene_type=int,
+                            num_genes=self.number_genes,
+                            gene_type=float,
                             sol_per_pop=self.population_size,
                             num_parents_mating=num_parents_mating,
                             keep_parents=self.keep_parents,
                             keep_elitism=self.keep_parents,
+                            # gene_space=self.gene_space,
                             save_solutions=True,
                             save_best_solutions=True,
                             initial_population=initial_population,
                             fitness_func=self.fitness_func,
                             on_generation=self.on_generation,
                             random_seed=14,
-                            suppress_warnings=True
+                            suppress_warnings=True, 
+                            # mutation_type=None,
+                            on_mutation=self.on_mutation,
+                            # crossover_type=None
                             )
         return ga_instance
 
     def runGA(self):
         ga_instance = self.initialize_run()
 
+        initial_fitness = self.limit_obj.objective_function(self.network_obj.contractual_limits, True)
+        print(f'Initial fitness: {initial_fitness}. Feasisible: {self.limit_obj.SafetyVerification(self.network_obj.contractual_limits)}')
+
         # Running the GA to optimize the parameters of the function.
         ga_instance.run()
         ga_instance.plot_fitness()
 
         # Returning the details of the best solution.
-        solution, solution_fitness, solution_idx = self.best_solution
-        print(f"Parameters of the best solution : {solution}")
+        solution, solution_fitness, solution_idx = self.best_solution_found
+        print(f"Parameters of the best solution: \n {self.limit_objreshape_function(solution)}")
         print(f"Fitness value of the best solution = {solution_fitness}")
-        if(self.reconstruct):            
-                B_sol = self.feederbalancing.get_B_from_genetic(
-                    self.reconstruct_solution(solution)
-                    )
-        else:
-            B_sol = self.feederbalancing.get_B_from_genetic(solution)
-            
-        print(f'Solution loss: {self.feederbalancing.objective_function(B_sol, False)} ({1/solution_fitness}). N. changes: {np.sum(B_sol * self.feederbalancing.B_init_opposite)}.')
-
-        if ga_instance.best_solution_generation != -1:
-            print(f"Best fitness value reached after {ga_instance.best_solution_generation} generations.")
+        print(f"Best fitness value reached after {ga_instance.best_solution_generation} generations.")
 
         # Saving the GA instance.
-        filename = 'genetic' # The filename to which the instance is saved. The name is without extension.
+        # filename = 'genetic' # The filename to which the instance is saved. The name is without extension.
         # ga_instance.save(filename=filename)
 
         # # Loading the saved GA instance.
         # loaded_ga_instance = pygad.load(filename=filename)
         # loaded_ga_instance.plot_fitness()
 
-        print(self.okay, self.total, self.okay/self.total)
+        print(self.okay, self.total, self.okay/self.total, self.scaling_factor)
         self.ga_instance = ga_instance
+        return self

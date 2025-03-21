@@ -4,15 +4,49 @@ import copy
 import Utils.GA_limits as GA_limits
 
 class Limits:
-    def __init__(self, input_path, net):
+    def __init__(self, network):
         np.random.seed(19)
-        self.input_path = input_path
 
-        self.net = copy.deepcopy(net)
-        self.limits = np.zeros((len(self.net.load),2))
+        self.network = network
+        self.net = copy.deepcopy(network.net)
+        self.limits = np.zeros(self.network.limits_shape)
 
-    def objective_function(self, limits):
+    def SafetyVerification(self,limits, deflatten = False, debug=False):
+        """
+        Checks if the network is in a safe state after applying DOEs.
+        Returns 1 if voltage and current levels are within safe limits, otherwise 0.
+        """
+        limits = limits if deflatten == False else self.reshape_function(limits)
+        safe = False
+        for i in [0,1]:
+            self.net.load.p_mw = limits[:, i] / 1000
+            try:
+                pp.runpp(self.net)
+                voltages_ok = self.net.res_bus.vm_pu.between(0.95, 1.05).all()
+                currents_ok = self.net.res_line.loading_percent.max() < 100
+
+                if voltages_ok and currents_ok:
+                    safe = True
+                else:
+                    if(debug):
+                        print(f"Issue detected: \n \
+                            - Voltage: Min: {self.net.res_bus.vm_pu.min()}. Max: {self.net.res_bus.vm_pu.max()}, \n \
+                            - Current: Min: {self.net.res_line.loading_percent.min()}. Max: {self.net.res_line.loading_percent.max()}")
+                    return False
+            except pp.powerflow.LoadflowNotConverged:
+                print("Power flow calculation failed. Network is unstable!")
+                return False  # Network is unstable if power flow does not converge.
+        return safe
+    def objective_function(self, limits, deflatten=False):
         # Eq. X in paper
-        return np.sum(np.abs(self.limits[:, 0]) + self.limits[:, 1]) 
-    def calculate_limits(self, net):
-        ga_instance = GA_limits.GA_limits(net)
+        limits = limits if deflatten==False else self.reshape_function(limits)
+        return np.sum(np.abs(limits[:, 0]) + limits[:, 1]) 
+    def calculate_limits(self):
+        ga_instance = GA_limits.GA_limits(self.network, self)
+
+        ga_instance = ga_instance.runGA()
+
+        return ga_instance
+
+    def reshape_function(self, limits):
+        return np.array(limits).reshape(self.network.limits_shape, order='F')

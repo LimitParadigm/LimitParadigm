@@ -27,9 +27,11 @@ class Network:
         self.len_timeseries = 4*24*365 #to change depending on the availbale data
         self.dict_phasecode_to_number = {'Monophasé (sans neutre)':1, 'Monophasé':1, 'Triphasé':2, 'Tétraphasé':3}
         self.pv_scaling_factor = 712 #2850/4=712 -> energy produced by a system of 1 kWhp in an year. 
-        self.pv_installation_sizes = [self.pv_scaling_factor * 4, self.pv_scaling_factor * 16] #Ref: https://www.yesenergysolutions.co.uk/advice/how-much-energy-solar-panels-produce-home
+        self.pv_installation_sizes = np.array([4, 16])#Ref: https://www.yesenergysolutions.co.uk/advice/how-much-energy-solar-panels-produce-home
+        self.pv_installation_annual = self.pv_installation_sizes * self.pv_scaling_factor 
         self.ev_scaling_factor = 350
-        self.ev_installation_sizes = [self.ev_scaling_factor * 3.5, self.ev_scaling_factor * 18] #Ref: TODO
+        self.ev_installation_sizes = np.array([3.5, 18]) #Ref: TODO
+        self.ev_installation_annual = self.ev_installation_sizes * self.ev_scaling_factor
 
         self.consumption_file = pd.read_excel(os.path.join(self.input_path, "RESA", "anonymized_consumption_file.xlsx"))
         self.list_load_timeseries = pd.read_csv(os.path.join(input_path, 'RESA', 'anonymized_Load_SM_timeseries.csv'), sep=',', index_col=0).reset_index()
@@ -46,6 +48,12 @@ class Network:
         self.temp_P = None
         self.feeder_colors = np.random.choice(list(mcolors.CSS4_COLORS.keys()), len(self.feeders))
         
+        max_consumption_power = 6 #kW
+        self.limits_shape = (self.number_customers,2)
+        self.contractual_power = np.ones(self.limits_shape) * [0,max_consumption_power]
+        self.contractual_limits = self.contractual_power
+
+
         self.timesteps = list(range(self.len_timeseries))
         self.number_timesteps = len(self.timesteps)
         self.load_timeseries(plot_timeseries=False)
@@ -59,6 +67,7 @@ class Network:
                 for f in range(len(self.feeders)) }
         self.considered_index_eans = None
 
+
     def import_network(self, input_path):
         net = pp.from_pickle(os.path.join(input_path, 'anonymized_net.p'))
         choosable_buses = list(net.load.bus)
@@ -67,10 +76,11 @@ class Network:
         columns_to_copy = ['ean', 'feeder', 'ann_cons', 'probPV', 'probEV', 'hh_surf', 'hh_size']
         for c in columns_to_copy:
             net.load[c] = list(net.asymmetric_load[c])
-        net.load['phase_load'] = 'A'
-        net.load['phase_pv'] = ''
-        net.load['phase_ev'] = ''
+        net.load['ph_load'] = 'A'
+        net.load['ph_pv'] = ''
+        net.load['ph_ev'] = ''
 
+        # For 3-phase PF (not needed for now)
         columns_to_del = ['s_sc_max_mva', 'rx_max', 'x0x_max', 'r0x0_max']
         for c in columns_to_del:
             del net.ext_grid[c]
@@ -85,8 +95,8 @@ class Network:
         net.asymmetric_load.drop(net.asymmetric_load.index, inplace=True)
         net.asymmetric_sgen.drop(net.asymmetric_sgen.index, inplace=True)
 
-        self.NetInfo(net)
-        simple_plotly(net, bus_color=net.bus['color'])
+        # self.NetInfo(net)
+        # simple_plotly(net, bus_color=net.bus['color'])
         return net, choosable_buses
     def NetInfo(self, net):
         #Print various statistics about the network.
@@ -124,7 +134,7 @@ class Network:
             for i,c in enumerate(customers_wo_ts):
                 ean = c.ean
                 annual_consumption = c['ann_cons']
-                phases = c['phase_load']
+                phases = c['ph_load']
                 phasecode = self.get_phasecode_from_number(len(phases))
 
                 closest_ean = None
@@ -157,7 +167,7 @@ class Network:
         for _,c in self.net.load.iterrows():
             ean = c['ean']
             if(ean in avalilable_ts_for_ean):
-                phases = c['phase_load']
+                phases = c['ph_load']
                 annual_consumption = c['ann_cons']
                 ts = self.list_load_timeseries[f"{ean}_A"]
                 tmp_load_timeseries = self.normalize_time_series(ts, annual_consumption)[:self.len_timeseries]
@@ -181,7 +191,7 @@ class Network:
             for j,c in enumerate(customers_wo_ts):
                 ean = c['ean']
                 c = self.net.load[self.net.load['ean'] == ean]
-                phases = c['phase_pv'].values[0]
+                phases = c['ph_pv'].values[0]
                 if(phases is not None):
                     annual_prod = c['ann_pv_prod'].values[0]
 
@@ -198,17 +208,20 @@ class Network:
             ean = c['ean']
             if(ean in avalilable_ts_for_ean):
                 annual_prod = np.sum(self.list_pv_timeseries[ean])
-                phases_load = c['phase_load']
+                phases_load = c['ph_load']
 
                 # Decide the number of phases based on the annual consumption
-                number_phase = 1 if annual_prod <= self.pv_installation_sizes[0] else 3 #It can generate conflicts with the load phase
+                number_phase = 1 if annual_prod <= self.pv_installation_annual[0] else 3 #It can generate conflicts with the load phase
                 number_phase = min(number_phase, len(phases_load)) #so avoid that the load is 1-phase but the PV 3-phase
                 
                 phases = phases_load if number_phase < len(self.avalilable_phases) else  self.avalilable_phases[:number_phase]
                 
-                self.net.load.at[j, 'phase_pv'] = ''.join(phases)
+                self.net.load.at[j, 'ph_pv'] = ''.join(phases)
                 self.net.load.at[j, 'ann_pv_prod'] = int(annual_prod)
-
+                
+                #Update limits
+                self.contractual_limits[j,0] -= self.pv_installation_sizes[0]
+                
                 tmp_pv_timeseries = self.normalize_time_series(self.list_pv_timeseries[ean], annual_prod)[:self.len_timeseries]
                 assigned_pv_timeseries[f"{ean}_A"] = -tmp_pv_timeseries
             else:
@@ -227,9 +240,11 @@ class Network:
                     continue
                 ean = c['ean']
                 phases = 'A'
-                annual_consumption = self.pv_installation_sizes[0]
+                annual_consumption = self.ev_installation_annual[0]
                 self.net.load.at[i, f'ann_{column}_cons'] = annual_consumption
-                self.net.load.at[i, f'phase_{column}'] = phases
+                self.net.load.at[i, f'ph_{column}'] = phases
+                #Update limits
+                self.contractual_limits[i,1] += self.ev_installation_sizes[0]
 
                 period = self.shift_timeseries(4*5)
                 factor = np.random.random(1)*0.2+0.8
@@ -243,7 +258,7 @@ class Network:
         self.assigned_load_timeseries = assigned_load_timeseries
         self.assigned_pv_timeseries = assigned_pv_timeseries
         self.assigned_ev_timeseries = assigned_ev_timeseries
-        print(f"Customers with:\nPV: {self.net.load['phase_pv'].notnull().sum()},\nEV: {self.net.load['phase_ev'].notnull().sum()}.")
+        print(f"Customers with:\nPV: {self.net.load['ph_pv'].notnull().sum()},\nEV: {self.net.load['ph_ev'].notnull().sum()}.")
 
 
     def assign_ts_to_phase(self):
@@ -251,13 +266,13 @@ class Network:
         tmp_values_P = np.zeros( [self.len_timeseries, len(temp_columns_P)] )
         P = pd.DataFrame(tmp_values_P, columns=temp_columns_P)
         for i,c in self.net.load.iterrows():
-            phases = c['phase_load']
+            phases = c['ph_load']
             ean = c['ean']
             column = f'{ean}_{phases[0]}'
             P[column] += self.assigned_load_timeseries[column]
-            if(c['phase_ev'] != ''):
+            if(c['ph_ev'] != ''):
                 P[column] += self.assigned_ev_timeseries[column]
-            if(c['phase_pv'] != ''):
+            if(c['ph_pv'] != ''):
                 P[column] += self.assigned_pv_timeseries[column]
         self.P = P
 
@@ -276,10 +291,12 @@ class Network:
         ids = self.chose_buses(choosable_buses, penetration, prob)
 
         for i in ids:
-            phases, annual_prod = 'A', self.pv_installation_sizes[0]
+            phases, annual_prod = 'A', self.pv_installation_annual[0]
             ind = net.load[net.load['bus']==i].index[0]
             net.load.at[ind, 'ann_pv_prod'] = annual_prod
-            net.load.at[ind, 'phase_pv'] = ''.join(phases)
+            net.load.at[ind, 'ph_pv'] = ''.join(phases)
+            #Update limits
+            self.contractual_limits[ind,0] -= self.pv_installation_sizes[0]
         return net
     def EVinstallation(self, net, choosable_buses, penetration):
         ids = self.Chose_buses(self, choosable_buses, penetration, net.load['probEV'])
@@ -314,7 +331,7 @@ class Network:
             for p in self.avalilable_phases:
                 plt.plot(self.P.iloc[self.timesteps][f'{ean}_{p}'].values)
             
-            print(f"Client ean: {ean}. \n Load: #phases: {c['phase_load']}, consumption: {c['ann_cons']}. \n PV: #phases: {c['phase_pv']}, consumption: {c['ann_pv_prod']}. \n EV: #phases: {c['phase_ev']}, consumption: {c['ann_ev_cons']}.")
+            print(f"Client ean: {ean}. \n Load: #phases: {c['ph_load']}, consumption: {c['ann_cons']}. \n PV: #phases: {c['ph_pv']}, consumption: {c['ann_pv_prod']}. \n EV: #phases: {c['ph_ev']}, consumption: {c['ann_ev_cons']}.")
             plt.show()
 
     def get_feeder(self, net, bus, prev_buses = [], prev_lines = []):
@@ -340,48 +357,6 @@ class Network:
             self.net.line.loc[self.net.line.index.isin(lines), 'feeder'] = i
             self.net.load.loc[self.net.load['bus'].isin(buses), 'feeder'] = i
         self.customers_index_per_feeder = {i:self.net.load.loc[self.net.load['feeder'] == i].index.values for i in range(len(self.feeders))}
-
-    def objective_function(self, B, complete=True):
-        num_feeders = len(self.feeders)
-        P = self.change_P(B)
-        loss_unbalance = 0
-        loss_aggregate = 0
-        
-        # Process each feeder
-        for f in range(num_feeders):
-            # Get Tx3 array of aggregated loads for all timesteps
-            A = self.aggregate_feeder_load(P, self.feeder_eans[f])  # Shape: (T, 3)
-            
-            # Calculate mean across phases for all timesteps
-            mu = np.mean(A, axis=1)  # Shape: (T,)
-            
-            # Calculate unbalance loss for all timesteps
-            # Reshape mu to (T,1) for broadcasting
-            loss = np.square(np.abs(A - mu[:, np.newaxis])).sum(axis=1)  # Shape: (T,)
-            loss_unbalance += np.sum(loss)
-            
-            # Calculate aggregate loss
-            # self.aggregates_init[f] should be shape (T, 3)
-            loss_A = np.maximum(0, A - self.aggragates_init[f])  # Shape: (T, 3)
-            loss_aggregate += np.sum(loss_A)
-        
-        # These calculations remain unchanged as they don't involve the time dimension
-        loss_changes = np.sum(B * self.B_init_opposite)
-        loss_distance = np.sum(self.distances * np.sum(B * self.B_init_opposite, axis=1))
-        
-        # Calculate final loss
-        loss = (loss_unbalance * self.scale_unbalance - 
-                loss_aggregate * self.scale_aggregate + 
-                (loss_changes * self.scale_changes + 
-                loss_distance * self.scale_distances) * complete)
-        
-        # Store loss components
-        self.unbalance_loss.append(loss_unbalance)
-        self.associated_loss.append(loss_aggregate)
-        self.changes_loss.append(loss_changes)
-        self.loss_distance.append(loss_distance)
-        
-        return loss
 
     def load_time_series_at_timestep(self, P, current_net, time_step):
         power_factor = 0.98
