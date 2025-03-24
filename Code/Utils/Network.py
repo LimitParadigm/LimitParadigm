@@ -258,7 +258,15 @@ class Network:
         self.assigned_load_timeseries = assigned_load_timeseries
         self.assigned_pv_timeseries = assigned_pv_timeseries
         self.assigned_ev_timeseries = assigned_ev_timeseries
-        print(f"Customers with:\nPV: {self.net.load['ph_pv'].notnull().sum()},\nEV: {self.net.load['ph_ev'].notnull().sum()}.")
+        
+        total_customers = len(self.net.load)
+        pv_customers = (self.net.load['ph_pv'] != '').sum()
+        ev_customers = (self.net.load['ph_ev'] != '').sum()
+        
+        print("Customer Distribution:")
+        print(f"Total Customers: {total_customers}")
+        print(f"PV Installations: {pv_customers} ({pv_customers/total_customers:.1%})")
+        print(f"EV Charging Points: {ev_customers} ({ev_customers/total_customers:.1%})")
 
 
     def assign_ts_to_phase(self):
