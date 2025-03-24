@@ -45,8 +45,13 @@ class Limits:
         ga_instance = GA_limits.GA_limits(self.network, self)
 
         ga_instance = ga_instance.runGA()
-
         return ga_instance
 
     def reshape_function(self, limits):
         return np.array(limits).reshape(self.network.limits_shape, order='F')
+    
+    def check_energy_inside_limits(self, energy_usage):
+        for i, energy in enumerate(energy_usage):
+            if self.limits[i,0] > energy or self.limits[i,1] < energy:
+                return False
+        return True

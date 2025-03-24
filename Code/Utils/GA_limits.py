@@ -180,4 +180,6 @@ class GA_limits:
 
         print(self.okay, self.total, self.okay/self.total, self.scaling_factor)
         self.ga_instance = ga_instance
+
+        self.limit_obj.limits = self.limit_obj.reshape_function(solution)
         return self

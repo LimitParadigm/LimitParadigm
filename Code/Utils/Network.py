@@ -41,7 +41,7 @@ class Network:
         self.evhp_timeseries = pd.read_excel(os.path.join(self.input_path, 'Timeseries', 'HPEV timeseries.xlsx')).reset_index()[:self.len_timeseries]
         self.ev_timeseries_high = pd.read_csv(os.path.join(self.input_path, 'Timeseries', 'EV_High.csv'),  index_col=0)[:self.len_timeseries]['High']
 
-        self.net, self.choosable_buses = self.import_network(self.input_path)
+        self.net, self.customer_buses = self.import_network(self.input_path)
         self.number_customers = len(self.net.load)
         self.feeders = [270,61]
         # self.assign_feeders(self.feeders) #Depends on the network (The first bus(es) after the substation low-voltage bus )
@@ -54,7 +54,9 @@ class Network:
         self.contractual_limits = self.contractual_power
 
 
-        self.timesteps = list(range(self.len_timeseries))
+        # self.timesteps = list(range(self.len_timeseries))
+        meaningful_days = [15, 83, 162, 241, 324]
+        self.timesteps = self.get_meaningful_days_timesteps(meaningful_days)
         self.number_timesteps = len(self.timesteps)
         self.load_timeseries(plot_timeseries=False)
         self.assign_ts_to_phase()
@@ -70,7 +72,7 @@ class Network:
 
     def import_network(self, input_path):
         net = pp.from_pickle(os.path.join(input_path, 'anonymized_net.p'))
-        choosable_buses = list(net.load.bus)
+        customer_buses = list(net.load.bus)
 
         pp.create_loads(net, list(net.asymmetric_load['bus']), p_mw=0)
         columns_to_copy = ['ean', 'feeder', 'ann_cons', 'probPV', 'probEV', 'hh_surf', 'hh_size']
@@ -97,7 +99,7 @@ class Network:
 
         # self.NetInfo(net)
         # simple_plotly(net, bus_color=net.bus['color'])
-        return net, choosable_buses
+        return net, customer_buses
     def NetInfo(self, net):
         #Print various statistics about the network.
         print(f'There are {len(net.ext_grid)} substation(s)')
@@ -186,8 +188,8 @@ class Network:
             pv_pen_rate = 0.85 #[0,1]
             current_pv_pen_rate =  len(customers_wo_ts) / len(self.net.load)
             delta_pv_pen_rate = pv_pen_rate # pv_pen_rate - current_pv_pen_rate #TODO: fix to a different amount
-            choosable_buses_missing_pv = [i.bus for i in customers_wo_ts]
-            self.net = self.PVinstallation(self.net, choosable_buses_missing_pv, delta_pv_pen_rate)
+            customer_buses_missing_pv = [i.bus for i in customers_wo_ts]
+            self.net = self.PVinstallation(self.net, customer_buses_missing_pv, delta_pv_pen_rate)
             for j,c in enumerate(customers_wo_ts):
                 ean = c['ean']
                 c = self.net.load[self.net.load['ean'] == ean]
@@ -284,19 +286,19 @@ class Network:
                 P[column] += self.assigned_pv_timeseries[column]
         self.P = P
 
-    def chose_buses(self, choosable_buses, penetration_rate, probabilities):
+    def chose_buses(self, customer_buses, penetration_rate, probabilities):
         # Function to choose buses for PV scenarios
-        elements_to_select = round(len(choosable_buses)*penetration_rate)
+        elements_to_select = round(len(customer_buses)*penetration_rate)
         ##Without probabilities
-        # ids = np.random.choice(choosable_buses, elements_to_select, replace=False)
+        # ids = np.random.choice(customer_buses, elements_to_select, replace=False)
         ##With probabilities
         p = probabilities / np.sum(probabilities) #Make the sum of p equal to 1 (Required by numpy)
-        ids = np.random.choice(choosable_buses, elements_to_select, replace=False, p=p)
+        ids = np.random.choice(customer_buses, elements_to_select, replace=False, p=p)
         return ids
 
-    def PVinstallation(self, net, choosable_buses, penetration):
-        prob = net.load[net.load.bus.isin(choosable_buses)]['probPV']
-        ids = self.chose_buses(choosable_buses, penetration, prob)
+    def PVinstallation(self, net, customer_buses, penetration):
+        prob = net.load[net.load.bus.isin(customer_buses)]['probPV']
+        ids = self.chose_buses(customer_buses, penetration, prob)
 
         for i in ids:
             phases, annual_prod = 'A', self.pv_installation_annual[0]
@@ -306,8 +308,8 @@ class Network:
             #Update limits
             self.contractual_limits[ind,0] -= self.pv_installation_sizes[0]
         return net
-    def EVinstallation(self, net, choosable_buses, penetration):
-        ids = self.Chose_buses(self, choosable_buses, penetration, net.load['probEV'])
+    def EVinstallation(self, net, customer_buses, penetration):
+        ids = self.Chose_buses(self, customer_buses, penetration, net.load['probEV'])
 
         for i in ids:
             #Add EV to customer's bus. No need to create a new element, just add 'E' to 'tech' columns
@@ -333,11 +335,14 @@ class Network:
         
         return sorted(timeseries_steps)
 
-    def plot_P(self,number=-1):
-        for _,c in self.net.load[:number].iterrows():
+    def plot_P(self,number=-1, limits=None):
+        for i,c in self.net.load[:number].iterrows():
             ean = c['ean']
             for p in self.avalilable_phases:
                 plt.plot(self.P.iloc[self.timesteps][f'{ean}_{p}'].values)
+            if limits is not None:
+                plt.axhline(y=limits[i,0], color='r', linestyle='--')
+                plt.axhline(y=limits[i,1], color='r', linestyle='--')
             
             print(f"Client ean: {ean}. \n Load: #phases: {c['ph_load']}, consumption: {c['ann_cons']}. \n PV: #phases: {c['ph_pv']}, consumption: {c['ann_pv_prod']}. \n EV: #phases: {c['ph_ev']}, consumption: {c['ann_ev_cons']}.")
             plt.show()
@@ -366,13 +371,13 @@ class Network:
             self.net.load.loc[self.net.load['bus'].isin(buses), 'feeder'] = i
         self.customers_index_per_feeder = {i:self.net.load.loc[self.net.load['feeder'] == i].index.values for i in range(len(self.feeders))}
 
-    def load_time_series_at_timestep(self, P, current_net, time_step):
+    def load_time_series_at_timestep(self, current_net, time_step):
         power_factor = 0.98
-        for i,l in current_net.asymmetric_load.iterrows():
-            for p in self.avalilable_phases:
-                load = P[f"{l['ean']}_{p}"].iloc[time_step] / 1000 #to convert in MW
-                current_net.asymmetric_load.loc[i, f'p_{p.lower()}_mw'] = load
-                current_net.asymmetric_load.loc[i, f'q_{p.lower()}_mvar'] = load * power_factor
+        for i,l in current_net.load.iterrows():
+            # for p in self.avalilable_phases:
+            load = self.P[f"{l['ean']}_A"].iloc[time_step] / 1000 #to convert in MW
+            current_net.load.loc[i, f'p_mw'] = load
+            current_net.load.loc[i, f'q_mvar'] = load * power_factor
 
     def run_simulations(self, B, output_path):
         lbar = tqdm(total=len(self.timesteps))
