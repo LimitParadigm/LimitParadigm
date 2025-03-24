@@ -1,7 +1,8 @@
-# Customer Phase Reconfiguration
-This repository contains the code and data used for the **Customer Phase Reconfiguration** in electrical distribution networks. The methodology optimizes phase configurations to improve network balance and efficiency, enabling better integration of distributed energy resources (DERs) like photovoltaic panels (PVs), electric vehicles (EVs), and heat pumps (HPs).
+# A new Paradigm for Dynamic Operating Envelopes and Bilateral Trading of Limits in Electricity Distribution Networks
 
-For more detailed information, refer to the paper [here](https://orbi.uliege.be/handle/2268/327465).
+This repository provides the implementation of Bilateral Limit exchange Under Ensured Safeness (BLUES), a novel paradigm that integrates Dynamic Operating Envelopes (DOEs) with a market-based limit exchange mechanism to enhance the flexibility and efficiency of low-voltage distribution networks.
+
+For more detailed information, refer to the paper [here](https://).
 
 ## Table of Contents
 - [Introduction](#introduction)
@@ -9,20 +10,22 @@ For more detailed information, refer to the paper [here](https://orbi.uliege.be/
 - [Usage](#usage)
 
 ## Introduction
-This repository provides the implementation of a computationally efficient methodology for optimizing customer phase configurations in power distribution networks. The approach performs only one rephasing, optimized over a full year of DER load curves, to achieve balanced operation and minimize energy losses. The method eliminates the need for power flow computations and extensive smart meter installations, making it scalable for large-scale networks.
+The BLUES framework enables dynamic allocation of import/export limits, allowing customers to trade unused capacity while ensuring grid stability and efficiency. This repository contains the necessary code to reproduce the methodology presented in our paper.
 
 ## Required Data
-The folder \Data contains all the data required to run the methodology:
-- A network (it requires a columns: ean, hh_surf, hh_size, distance).
-- Different time-series for customers, PVs, EVs, and HPs.
+The required data for running the code is available in the `Data` folder. The data includes:
+
+- A Pandapower network configuration file 
+- Timeseries of energy usage, both consumtpion and production
+
 
 ## Usage
 To run the methodology, follow these steps:
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/PhaseReconfiguration/CustomerPhaseReconfiguration.git
-   cd OptimalTPI
+   git clone https://github.com/LimitParadigm/LimitParadigm.git
+   cd LimitParadigm
 
 2. Install the required packages:
    ```bash
