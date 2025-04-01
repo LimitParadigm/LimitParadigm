@@ -78,7 +78,10 @@ class GA_limits:
         self.scaling_factor += self.decrease_scaling_factor
         self.scaling_factor = self.scaling_factor if self.scaling_factor<0.9 else 0.9
         self.okay+=1
-        fitness = self.limit_obj.objective_function(solution, True)
+        sol = self.limit_obj.reshape_function(solution)
+        fitness = self.limit_obj.objective_function(sol)
+        deviation = np.std(sol[:,0]) + np.std(sol[:,1])
+        fitness -= deviation * 5
         # fitness = 1.0 / (fitness + 1e-9)
         return fitness
 
@@ -98,13 +101,13 @@ class GA_limits:
         tmp_best_solution = ga_instance.best_solution(pop_fitness=ga_instance.last_generation_fitness)
         self.fitnesses.append(ga_instance.last_generation_fitness)
         
-        print(f"Generation = {ga_instance.generations_completed}/{self.num_generations}")
-        
         diff = tmp_best_solution[1] if self.best_solution_found is None else tmp_best_solution[1] - self.best_solution_found[1]
-        if diff > 0:
+        if ga_instance.generations_completed % 10 == 0 or diff > 0:
+            print(f"Generation = {ga_instance.generations_completed}/{self.num_generations}")
+        
+        if diff>0:
             print(f"Fitness = {tmp_best_solution[1]} (diff: {diff})")
             self.best_solution_found = tmp_best_solution
-            print()
         elif self.best_solution_found is None:
             self.best_solution_found = tmp_best_solution
 
