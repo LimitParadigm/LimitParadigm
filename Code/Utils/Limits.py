@@ -11,7 +11,7 @@ class Limits:
         self.net = copy.deepcopy(network.net)
         self.limits = np.zeros(self.network.limits_shape)
 
-    def SafetyVerification(self,limits, deflatten = False, debug=False):
+    def safety_verification(self, limits, deflatten = False, debug=False):
         """
         Checks if the network is in a safe state after applying DOEs.
         Returns 1 if voltage and current levels are within safe limits, otherwise 0.
@@ -55,3 +55,8 @@ class Limits:
             if self.limits[i,0] > energy or self.limits[i,1] < energy:
                 return False
         return True
+
+    def store_limits(self, limits, path):
+        np.save(path, limits)
+    def load_limits(self, path):
+        self.limits = np.load(path)

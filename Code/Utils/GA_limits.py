@@ -11,8 +11,8 @@ class GA_limits:
     """
 
     def __init__(self, network_obj: Any, limit_obj: Any,
-                 population_size: int = 30,
-                 num_generations: int = 50,
+                 population_size: int = 20,
+                 num_generations: int = 50 + 30,
                  mutation_rate: float = 0.4,
                  early_stopping_generations: int = 10,
                  early_stopping_threshold: float = 1e-6):
@@ -70,7 +70,7 @@ class GA_limits:
         """Evaluate the fitness of a solution."""
         #TODO: this function can be improved by addining a factor for the deviation in limits between the customers
         self.total+=1
-        if(self.limit_obj.SafetyVerification(solution, True) == False):
+        if(self.limit_obj.safety_verification(solution, True) == False):
             self.mistakes.append(solution.copy())
             self.scaling_factor -= self.decrease_scaling_factor
             self.scaling_factor = self.scaling_factor if self.scaling_factor>0.1 else 0.1
@@ -160,7 +160,7 @@ class GA_limits:
         ga_instance = self.initialize_run()
 
         initial_fitness = self.limit_obj.objective_function(self.network_obj.contractual_limits, True)
-        print(f'Initial fitness: {initial_fitness}. Feasible: {self.limit_obj.SafetyVerification(self.network_obj.contractual_limits)}')
+        print(f'Initial fitness: {initial_fitness}. Feasible: {self.limit_obj.safety_verification(self.network_obj.contractual_limits)}')
 
         ga_instance.run()
         
@@ -185,4 +185,6 @@ class GA_limits:
         self.ga_instance = ga_instance
 
         self.limit_obj.limits = self.limit_obj.reshape_function(solution)
+
+        self.limit_obj.store_limits(self.limit_obj.limits, "solution_limits.npy")
         return self
