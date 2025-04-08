@@ -2,6 +2,7 @@ import numpy as np
 import pandapower as pp
 import copy
 import Utils.GA_limits as GA_limits
+import matplotlib.pyplot as plt
 
 class Limits:
     def __init__(self, network):
@@ -10,6 +11,7 @@ class Limits:
         self.network = network
         self.net = copy.deepcopy(network.net)
         self.limits = np.zeros(self.network.limits_shape)
+        self.initial_limits = np.zeros(self.network.limits_shape)
 
     def safety_verification(self, limits, deflatten = False, debug=False):
         """
@@ -32,10 +34,10 @@ class Limits:
                         print(f"Issue detected: \n \
                             - Voltage: Min: {self.net.res_bus.vm_pu.min()}. Max: {self.net.res_bus.vm_pu.max()}, \n \
                             - Current: Min: {self.net.res_line.loading_percent.min()}. Max: {self.net.res_line.loading_percent.max()}")
-                    return False
+                    safe = False
             except pp.powerflow.LoadflowNotConverged:
                 print("Power flow calculation failed. Network is unstable!")
-                return False  # Network is unstable if power flow does not converge.
+                safe = False
         return safe
     def objective_function(self, limits, deflatten=False):
         # Eq. X in paper
@@ -60,3 +62,41 @@ class Limits:
         np.save(path, limits)
     def load_limits(self, path):
         self.limits = np.load(path)
+        self.initial_limits = self.limits.copy()
+
+    def plot_limits_usage(self, net, limits=None):
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ean_values = net.load["ean"].astype(str)  # Convert to string for better display
+        x_positions = range(len(ean_values))  # Create positions for each EAN
+
+        # Plot customer loads (convert MW to kW)
+        loads_kw = net.load.p_mw * 1000
+        loads_kw.plot(ax=ax, label='Customer Loads (kW)', color='blue', linewidth=2)
+
+        # Plot limits (assuming limits_obj.limits is a 2D array with [lower, upper] bounds)
+        if len(limits.shape) == 2:
+            # Upper bounds
+            ax.plot(limits[:, 1], 
+            label='Upper Limit (kW)', 
+            color='red', 
+            linestyle='--',
+            linewidth=1.5)
+        # Lower bounds
+        ax.plot(limits[:, 0], 
+            label='Lower Limit (kW)', 
+            color='green', 
+            linestyle='--',
+            linewidth=1.5)
+
+        # Customize plot
+        ax.set_title('Customer Loads vs. Operational Limits')
+        ax.set_xlabel('Customer Index')
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(ean_values, rotation=45, ha='right')
+        ax.set_ylabel('Power (kW)')
+        ax.grid(True, which='both', linestyle='--', alpha=0.7)
+        ax.legend()
+
+        # Adjust layout
+        plt.tight_layout()
+        plt.show()

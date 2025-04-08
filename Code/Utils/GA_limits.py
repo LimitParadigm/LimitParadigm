@@ -55,8 +55,8 @@ class GA_limits:
         for i in range(self.n):
             #Export (production -> [PV peak production,0])
             self.gene_space[i] = {'low': float(self.network_obj.contractual_limits[i,0]), 'high':0}
-            #Import [2, contractual power + EV])
-            self.gene_space[self.n+i] = {'low': 1, 'high': float(self.network_obj.contractual_limits[i,1])}
+            #Import [Min, contractual power + EV])
+            self.gene_space[self.n+i] = {'low': 1.2, 'high': float(self.network_obj.contractual_limits[i,1])}
 
     def generate_individual(self) -> np.ndarray:
         """Generate a random individual solution."""
@@ -185,6 +185,7 @@ class GA_limits:
         self.ga_instance = ga_instance
 
         self.limit_obj.limits = self.limit_obj.reshape_function(solution)
+        self.limit_obj.initial_limits = self.limit_obj.limits.copy()
 
         self.limit_obj.store_limits(self.limit_obj.limits, "solution_limits.npy")
         return self
